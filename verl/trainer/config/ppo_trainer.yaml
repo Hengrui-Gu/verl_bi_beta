@@ -75,6 +75,12 @@ algorithm:
   # Whether to normalize advantages by std (specific to GRPO)
   norm_adv_by_std_in_grpo: True
 
+  # Positive-sample shaping exponent for algorithm.adv_estimator=grpo_bi_beta
+  beta_pos: 0.5
+
+  # Negative-sample shaping exponent for algorithm.adv_estimator=grpo_bi_beta
+  beta_neg: 0.5
+
   # Whether to enable in-reward KL penalty
   use_kl_in_reward: False
 

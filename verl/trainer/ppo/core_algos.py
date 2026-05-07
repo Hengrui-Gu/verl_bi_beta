@@ -96,6 +96,7 @@ class AdvantageEstimator(str, Enum):
 
     GAE = "gae"
     GRPO = "grpo"
+    GRPO_BI_BETA = "grpo_bi_beta"
     REINFORCE_PLUS_PLUS = "reinforce_plus_plus"
     REINFORCE_PLUS_PLUS_BASELINE = "reinforce_plus_plus_baseline"
     REMAX = "remax"
@@ -356,6 +357,69 @@ def compute_grpo_vectorized_outcome_advantage(
             scalars = scores - mean_g[g]
         advantages = scalars.unsqueeze(-1) * response_mask
         return advantages, advantages
+
+
+@register_adv_est(AdvantageEstimator.GRPO_BI_BETA)
+def compute_grpo_bi_beta_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    beta_pos: float = 0.5,
+    beta_neg: float = 0.5,
+    config: Optional[AlgoConfig] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Outcome-level GRPO variant with separate positive/negative beta shaping."""
+    if config is not None:
+        beta_pos = float(config.get("beta_pos", beta_pos))
+        beta_neg = float(config.get("beta_neg", beta_neg))
+
+    if beta_pos <= 0 or beta_neg <= 0:
+        raise ValueError(
+            "grpo_bi_beta requires beta_pos > 0 and beta_neg > 0; "
+            f"got beta_pos={beta_pos}, beta_neg={beta_neg}."
+        )
+
+    with torch.no_grad():
+        scores = token_level_rewards.sum(dim=-1)
+        device = scores.device
+        dtype = scores.dtype
+        succ_bool = scores > 0
+
+        sample_adv = torch.where(succ_bool, torch.ones_like(scores), -torch.ones_like(scores))
+
+        id2idx = defaultdict(list)
+        for i in range(scores.shape[0]):
+            id2idx[index[i]].append(i)
+
+        eps = 1e-6
+
+        for members in id2idx.values():
+            mem = torch.tensor(members, device=device, dtype=torch.long)
+            group_size = mem.numel()
+            num_correct = succ_bool[mem].sum().item()
+
+            if num_correct == group_size:
+                sample_adv[mem[succ_bool[mem]]] = 0.0
+                continue
+
+            if num_correct == 0:
+                sample_adv[mem[~succ_bool[mem]]] = 0.0
+                continue
+
+            if 0 < num_correct < group_size:
+                p = torch.tensor(num_correct / float(group_size), device=device, dtype=dtype).clamp(eps, 1 - eps)
+                one_minus_p = 1.0 - p
+
+                pos_mask = succ_bool[mem]
+                if pos_mask.any():
+                    sample_adv[mem[pos_mask]] = (one_minus_p / p).pow(beta_pos).to(dtype)
+
+                neg_mask = ~succ_bool[mem]
+                if neg_mask.any():
+                    sample_adv[mem[neg_mask]] = -((p / one_minus_p).pow(beta_neg).to(dtype))
+
+        advantages = sample_adv.unsqueeze(-1) * response_mask.to(dtype=dtype)
+        return advantages, advantages.clone()
 
 
 @register_adv_est(AdvantageEstimator.GDPO)  # or simply: @register_adv_est("gdpo")
