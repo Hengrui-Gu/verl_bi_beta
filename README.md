@@ -17,6 +17,3 @@ algorithm.adv_estimator=grpo_bi_beta \
 algorithm.beta_pos=0.8 \
 algorithm.beta_neg=0.3
 ```
-
-Both `beta_pos` and `beta_neg` must be strictly positive.
-
